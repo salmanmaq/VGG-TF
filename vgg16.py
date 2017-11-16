@@ -1,11 +1,25 @@
+from __future__ import division
 import tensorflow as tf
-import cv2
-import matplotlib.pyplot as plt
+import numpy as np
+#import cv2
+#import matplotlib.pyplot as plt
 import os
 import cPickle
-from __future__ import division
+import functools
 
 LOGDIR = './graphs'
+
+def property_with_check(input_fn):
+    attribute = '_cache_' + input_fn.__name__
+
+    @property
+    @functools.wraps(input_fn)
+    def check_attr(self):
+        if not hasattr(self, attribute):
+            setattr(self, attribute, input_fn(self))
+        return getattr(self, attribute)
+
+    return check_attr
 
 class CIFAR10Loader:
     '''Loads the CIFAR-10 Dataset from disk'''
@@ -46,16 +60,16 @@ class CIFAR10Loader:
         self.test_labels[np.arange(10000), self.te_labels] = 1
 
         # Reshape training and test images from vectors to matrices
-        self.train_data = np.reshape(tr_data, newshape=[50000, 32, 32, 3])
-        self.test_data = np.reshape(te_data, newshape=[10000, 32, 32, 3])
+        self.train_data = np.reshape(self.tr_data, newshape=[50000, 32, 32, 3])
+        self.test_data = np.reshape(self.te_data, newshape=[10000, 32, 32, 3])
 
-        def getTrainData(self):
-            '''Fetches the training images and labels'''
-            return self.train_data, self.train_labels
+    def getTrainData(self):
+        '''Fetches the training images and labels'''
+        return self.train_data, self.train_labels
 
-        def getTestData(self):
-            '''Fetches the test images and labels'''
-            return self.test_data, self.test_labels
+    def getTestData(self):
+        '''Fetches the test images and labels'''
+        return self.test_data, self.test_labels
 
 class VGG16:
 
@@ -82,13 +96,19 @@ class VGG16:
         self.sess = tf.Session()
         self.sess.run(init)
 
-        self.output
-        self.Optimizer
-        self.loss
+        self._initialze_network()
+
+        self._output = None
+        self._optimizer = None
+        self._loss = None
 
         # Load the dataset
         self.train_data, self.train_labels = dataLoader.getTrainData()
         self.test_data, self.test_labels = dataLoader.getTestData()
+
+        self.batches_per_epoch = self.train_data.shape[0] / self.batch_size
+        if (self.batches_per_epoch % self.batch_size != 0):
+            self.batches_per_epoch = int(self.batches_per_epoch) + 1
 
         self.batch_counter = 0 # Iterator to load data batch by batch
 
@@ -121,15 +141,15 @@ class VGG16:
         weights['b_conv12'] = tf.Variable(tf.constant(0.1, shape=[512]))
         weights['W_conv13'] = tf.Variable(tf.truncated_normal([1, 1, 512, 512], stddev= 0.1))
         weights['b_conv13'] = tf.Variable(tf.constant(0.1, shape=[512]))
-        weights['W_fc1'] = tf.Variable(tf.truncated_normal([3*3*512, 4096], stddev= 0.1))
-        weights['b_fc1'] = tf.Variable(tf.constant(0.1, shape=[4096]))
-        weights['W_fc2'] = tf.Variable(tf.truncated_normal([4096, 4096], stddev= 0.1))
-        weights['b_fc2'] = tf.Variable(tf.constant(0.1, shape=[4096]))
-        weights['W_fc3'] = tf.Variable(tf.truncated_normal([4096, num_classes], stddev= 0.1))
-        weights['b_fc3'] = tf.Variable(tf.constant(0.1, shape=[num_classes]))
+        weights['W_fc1'] = tf.Variable(tf.truncated_normal([1*1*512, 384], stddev= 0.1))
+        weights['b_fc1'] = tf.Variable(tf.constant(0.1, shape=[384]))
+        weights['W_fc2'] = tf.Variable(tf.truncated_normal([384, 256], stddev= 0.1))
+        weights['b_fc2'] = tf.Variable(tf.constant(0.1, shape=[256]))
+        weights['W_fc3'] = tf.Variable(tf.truncated_normal([256, self.num_classes], stddev= 0.1))
+        weights['b_fc3'] = tf.Variable(tf.constant(0.1, shape=[self.num_classes]))
         return weights
 
-    def networkDefinition(self):
+    def _initialze_network(self):
         ''' Runs the forward pass'''
 
         # Layer 1
@@ -177,62 +197,89 @@ class VGG16:
         h_conv13 = tf.nn.relu(convolve13)
         conv13 = tf.nn.max_pool(h_conv13, ksize=[1,2,2,1],strides=[1,2,2,1], padding='SAME')
         # Layer 14 (FC)
-        layer13_flat = tf.reshape(conv13, [-1, 3*3*512])
+        layer13_flat = tf.reshape(conv13, [-1, 1*1*512])
         _fc1 = tf.add(tf.matmul(layer13_flat, self.weights['W_fc1']), self.weights['b_fc1'])
         fc1 = tf.nn.relu(_fc1)
         # Dropout 14
-        fc1_drop = tf.nn.dropout(fc1, keep_prob)
+        fc1_drop = tf.nn.dropout(fc1, self.keep_prob)
         # Layer 15 (FC)
         _fc2 = tf.add(tf.matmul(fc1_drop, self.weights['W_fc2']), self.weights['b_fc2'])
         fc2 = tf.nn.relu(_fc2)
         # Dropout 15
-        fc2_drop = tf.nn.dropout(fc2, keep_prob)
+        fc2_drop = tf.nn.dropout(fc2, self.keep_prob)
         # Layer 16 (FC)
         _fc3 = tf.add(tf.matmul(fc2_drop, self.weights['W_fc3']), self.weights['b_fc3'])
         self.fc3 = tf.nn.relu(_fc3)
 
-        def train(self):
-            ''' Trains the CNN and updates the parameters
+    def train(self):
+        ''' Trains the CNN and updates the parameters
 
-            Inputs: Training Images, Training Image labels
-            Outputs: None
-            '''
-            print '\n#################Started Training!#################\n'
+        Inputs: Training Images, Training Image labels
+        Outputs: None
+        '''
+        print '\n################# Started Training! #################\n'
 
-            for _ in range(self.EPOCHS):
-                #TODO Implement get batch function
-                self.sess.run(self.optimizer, feed_dict={self.X: X_batch, self.y: y_batch, self.keep_prob=0.5}
-                if
+        for _ in range(self.EPOCHS):
+            # Get the next batch for training
+            X_batch, y_batch = self.getNextBatch()
+            self.sess.run(self.optimizer, feed_dict={self.X: X_batch, self.y: y_batch, self.keep_prob: 0.5})
+            if (self.batch_counter % 10 == 0) or (self.batch_counter == 0):
+                print 'Epoch: %d, Batch: %d of %d, Loss: %g' % (_, self.batch_counter, self.batches_per_epoch, self.loss)
 
-        def test(self):
-            '''Tests the performance of the test data and returns the loss'''
-            loss = self.sess.run(self.loss, feed_dict={self.X: X_test, self.y = y_test, self.keep_prob=1.0})
+            print '\n###### Epoch %d of %d completed! ######' % (_, self.EPOCHS)
 
-            correct_prediction = tf.equal(tf.argmax(y_pred, 1), tf.argmax(y, 1))
-            accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
-            return loss, accuracy
+        print '\n################# Finished Training! #################\n'
 
-        def getNextBatch(self):
-            '''Gets the next batch of the training data'''
-            train_data.shape()
+    def test(self):
+        '''Tests the performance of the test data and returns the loss'''
+        loss = self.sess.run(self.loss, feed_dict={self.X: self.test_data, self.y : self.test_labels, self.keep_prob: 1.0})
 
+        correct_prediction = tf.equal(tf.argmax(self.output, 1), tf.argmax(self.y, 1))
+        accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
+        return loss, accuracy
 
-        def getWeights(self):
-            '''Returns the network weights'''
-            return self.sess.run(self.weights)
+    def getNextBatch(self):
+        '''Gets the next batch of the training data'''
+        start = self.batch_counter * self.batch_size
+        end = (self.batch_counter + 1) * self.batch_size
+        self.batch_counter += 1
 
-        @property_with_check
-        def output(self):
+        # Condition to check if it's the last batch. Reset counter if it's the case
+        if end > self.train_data.shape[0]:
+            end = 50000
+            self.batch_counter = 0 #TODO: This results in the last batch being printed as batch 0 as well
+
+        batch_data = self.train_data[start:end,:,:,:]
+        batch_labels = self.train_labels[start:end,:]
+
+        return batch_data, batch_labels
+
+    def shuffleDataset(self):
+        '''Shuffles the entire dataset'''
+        pass
+
+    def getWeights(self):
+        '''Returns the network weights'''
+        return self.sess.run(self.weights)
+
+    @property
+    def output(self):
+        if not self._output:
             y_pred = tf.nn.softmax(self.fc3)
-            return y_pred
+            self._output = y_pred
+        return self._output
 
-        @property_with_check
-        def loss(self):
-            cross_entroy = tf.reduce_mean(-tf.reduce_sum(self.y *tf.log(self.y_pred), reduction_indices=[1]))
-            return cross_entroy
+    @property
+    def loss(self):
+        if not self._loss:
+            cross_entroy = tf.reduce_mean(-tf.reduce_sum(self.y *tf.log(self.output), reduction_indices=[1]))
+            self._loss = cross_entroy
+        return self._loss
 
-        @property_with_check
-        def optimizer(self):
+    @property
+    def optimizer(self):
+        if not self._optimizer:
             opt = tf.train.AdamOptimizer(self.learning_rate)
-            opt = opt.minimize(self.cross_entroy)
-            return opt
+            opt = opt.minimize(self.loss)
+            self._optimizer = opt
+        return self._optimizer
