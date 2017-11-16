@@ -213,9 +213,12 @@ class VGG16:
             return loss, accuracy
 
         def getNextBatch(self):
+            '''Gets the next batch of the training data'''
+            train_data.shape()
 
 
         def getWeights(self):
+            '''Returns the network weights'''
             return self.sess.run(self.weights)
 
         @property_with_check
