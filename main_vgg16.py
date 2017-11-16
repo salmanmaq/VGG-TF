@@ -17,5 +17,7 @@ network = VGG16(cifarLoader)
 
 if job == 'train':
     network.train()
-else:
+elif job == 'test':
     network.test()
+
+network.sess.close()
