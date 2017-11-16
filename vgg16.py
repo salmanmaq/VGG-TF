@@ -9,18 +9,6 @@ import functools
 
 LOGDIR = './graphs'
 
-def property_with_check(input_fn):
-    attribute = '_cache_' + input_fn.__name__
-
-    @property
-    @functools.wraps(input_fn)
-    def check_attr(self):
-        if not hasattr(self, attribute):
-            setattr(self, attribute, input_fn(self))
-        return getattr(self, attribute)
-
-    return check_attr
-
 class CIFAR10Loader:
     '''Loads the CIFAR-10 Dataset from disk'''
 
@@ -101,6 +89,7 @@ class VGG16:
         self._output = None
         self._optimizer = None
         self._loss = None
+        self._accuracy = None
 
         # Load the dataset
         self.train_data, self.train_labels = dataLoader.getTrainData()
@@ -141,11 +130,11 @@ class VGG16:
         weights['b_conv12'] = tf.Variable(tf.constant(0.1, shape=[512]))
         weights['W_conv13'] = tf.Variable(tf.truncated_normal([1, 1, 512, 512], stddev= 0.1))
         weights['b_conv13'] = tf.Variable(tf.constant(0.1, shape=[512]))
-        weights['W_fc1'] = tf.Variable(tf.truncated_normal([1*1*512, 384], stddev= 0.1))
-        weights['b_fc1'] = tf.Variable(tf.constant(0.1, shape=[384]))
-        weights['W_fc2'] = tf.Variable(tf.truncated_normal([384, 256], stddev= 0.1))
-        weights['b_fc2'] = tf.Variable(tf.constant(0.1, shape=[256]))
-        weights['W_fc3'] = tf.Variable(tf.truncated_normal([256, self.num_classes], stddev= 0.1))
+        weights['W_fc1'] = tf.Variable(tf.truncated_normal([1*1*512, 512], stddev= 0.1))
+        weights['b_fc1'] = tf.Variable(tf.constant(0.1, shape=[512]))
+        weights['W_fc2'] = tf.Variable(tf.truncated_normal([512, 512], stddev= 0.1))
+        weights['b_fc2'] = tf.Variable(tf.constant(0.1, shape=[512]))
+        weights['W_fc3'] = tf.Variable(tf.truncated_normal([512, self.num_classes], stddev= 0.1))
         weights['b_fc3'] = tf.Variable(tf.constant(0.1, shape=[self.num_classes]))
         return weights
 
@@ -221,10 +210,11 @@ class VGG16:
 
         for _ in range(self.EPOCHS):
             # Get the next batch for training
-            X_batch, y_batch = self.getNextBatch()
-            self.sess.run(self.optimizer, feed_dict={self.X: X_batch, self.y: y_batch, self.keep_prob: 0.5})
-            if (self.batch_counter % 10 == 0) or (self.batch_counter == 0):
-                print 'Epoch: %d, Batch: %d of %d, Loss: %g' % (_, self.batch_counter, self.batches_per_epoch, self.loss)
+            for bn in range(self.batches_per_epoch):
+                X_batch, y_batch = self.getNextBatch()
+                opti, loss = self.sess.run([self.optimizer, self.loss], feed_dict={self.X: X_batch, self.y: y_batch, self.keep_prob: 1.0})
+                if (self.batch_counter % 10 == 0) or (self.batch_counter == 0):
+                    print 'Epoch: %d, Batch: %d of %d, Loss: %f' % (_, self.batch_counter, self.batches_per_epoch, loss)
 
             print '\n###### Epoch %d of %d completed! ######' % (_, self.EPOCHS)
 
@@ -233,9 +223,7 @@ class VGG16:
     def test(self):
         '''Tests the performance of the test data and returns the loss'''
         loss = self.sess.run(self.loss, feed_dict={self.X: self.test_data, self.y : self.test_labels, self.keep_prob: 1.0})
-
-        correct_prediction = tf.equal(tf.argmax(self.output, 1), tf.argmax(self.y, 1))
-        accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
+        accuracy = self.sess.run(self.accuracy, feed_dict={self.y : self.test_labels})
         return loss, accuracy
 
     def getNextBatch(self):
@@ -246,7 +234,7 @@ class VGG16:
 
         # Condition to check if it's the last batch. Reset counter if it's the case
         if end > self.train_data.shape[0]:
-            end = 50000
+            end = self.train_data.shape[0]
             self.batch_counter = 0 #TODO: This results in the last batch being printed as batch 0 as well
 
         batch_data = self.train_data[start:end,:,:,:]
@@ -264,22 +252,30 @@ class VGG16:
 
     @property
     def output(self):
-        if not self._output:
-            y_pred = tf.nn.softmax(self.fc3)
-            self._output = y_pred
+        #if not self._output:
+        y_pred = tf.nn.softmax(self.fc3)
+        self._output = y_pred
         return self._output
 
     @property
     def loss(self):
-        if not self._loss:
-            cross_entroy = tf.reduce_mean(-tf.reduce_sum(self.y *tf.log(self.output), reduction_indices=[1]))
-            self._loss = cross_entroy
+        #if not self._loss:
+        cross_entroy = tf.reduce_mean(-tf.reduce_sum(self.y * tf.log(self.output), reduction_indices=[1]))
+        self._loss = cross_entroy
         return self._loss
 
     @property
     def optimizer(self):
         if not self._optimizer:
-            opt = tf.train.AdamOptimizer(self.learning_rate)
+            opt = tf.train.GradientDescentOptimizer(self.learning_rate)
             opt = opt.minimize(self.loss)
             self._optimizer = opt
         return self._optimizer
+
+    @property
+    def accuracy(self):
+        if not self._accuracy:
+            correct_prediction = tf.equal(tf.argmax(self.output, 1), tf.argmax(self.y, 1))
+            accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
+            self._accuracy = accuracy
+        return self._accuracy
